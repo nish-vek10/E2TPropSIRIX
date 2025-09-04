@@ -66,7 +66,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 # --- SiRiX API ---
 sirix_api_url = "https://restapi-real3.sirixtrader.com/api/UserStatus/GetUserTransactions"
 sirix_token = os.getenv("SIRIX_TOKEN", "t1_a7xeQOJPnfBzuCncH60yjLFu")  # <-- demo fallback; override via env
-master_user_id = os.getenv("SIRIX_MASTER_USER_ID", "180314")  # string per API model
+master_user_id = os.getenv("SIRIX_MASTER_USER_ID", "214422")  # string per API model
 
 # Which sections to request from SiRiX (True = ask server to include)
 req_open_positions = True
