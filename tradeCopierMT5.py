@@ -66,7 +66,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 # --- SiRiX API ---
 sirix_api_url = "https://restapi-real3.sirixtrader.com/api/UserStatus/GetUserTransactions"
 sirix_token = os.getenv("SIRIX_TOKEN", "t1_a7xeQOJPnfBzuCncH60yjLFu")  # <-- demo fallback; override via env
-master_user_id = os.getenv("SIRIX_MASTER_USER_ID", "214422")  # string per API model
+master_user_id = os.getenv("SIRIX_MASTER_USER_ID", "205139")  # string per API model
 
 # Which sections to request from SiRiX (True = ask server to include)
 req_open_positions = True
@@ -81,8 +81,8 @@ poll_interval_sec = float(os.getenv("SIRIX_POLL_INTERVAL_SEC", "1.0"))  # tune 0
 # If MT5 terminal is already logged in, and want to attach to it,
 # set auto_login = False. Otherwise, fill these in and leave True.
 auto_login = True
-mt5_login = int(os.getenv("MT5_LOGIN", "10803859")) or 0        # login account number
-mt5_password = os.getenv("MT5_PASSWORD", "3^iz1GVX")             # login password
+mt5_login = int(os.getenv("MT5_LOGIN", "11030447")) or 0        # login account number
+mt5_password = os.getenv("MT5_PASSWORD", "5J$DL^x%")             # login password
 mt5_server = os.getenv("MT5_SERVER", "VantageGlobalPrimeLLP-Demo")                 # broker server
 
 # --- MT5 Trade settings ---
