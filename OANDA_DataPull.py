@@ -1,0 +1,184 @@
+"""
+XAUUSD M1 Raw Candles Export (OANDA → Excel)
+- Uses midpoint (M) prices: (bid+ask)/2
+- Columns: Open | High | Low | Close | Volume | Timestamp (UTC)
+- Progress printed in terminal
+- Full summary written at top of the Excel sheet (no overlap)
+"""
+
+import requests
+import pandas as pd
+from datetime import datetime, timedelta, timezone
+import time
+
+# ========= USER SETTINGS =========
+OANDA_TOKEN = "37ee33b35f88e073a08d533849f7a24b-524c89ef15f36cfe532f0918a6aee4c2"
+INSTRUMENT  = "XAU_USD"
+GRANULARITY = "M1"
+OUTPUT_XLSX = r"C:\Users\anish\OneDrive\Desktop\Anish\OANDA DATA\XAUUSD\XAUUSD_M1_25-08-01_to_25-08-31.xlsx"
+
+# Date strings (DD/MM/YYYY HH:MM:SS TZ)
+START_STR = "01/08/2025 00:00:00 GMT"
+END_STR   = "31/08/2025 23:55:00 GMT"
+
+# Pull in chunks (OANDA returns up to ~5000)
+BATCH_CANDLES = 5000
+API_BASE = "https://api-fxpractice.oanda.com/v3"
+HEADERS = {"Authorization": f"Bearer {OANDA_TOKEN}"}
+# =================================
+
+def parse_gmt(s: str) -> datetime:
+    dt = pd.to_datetime(s, dayfirst=True, utc=True)
+    return dt.to_pydatetime()
+
+def iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+def fetch_candles(instrument: str, start_dt: datetime, end_dt: datetime):
+    cur = start_dt
+    total_minutes = int((end_dt - start_dt).total_seconds() // 60)
+    pulled = 0
+    batch_idx = 0
+
+    while cur <= end_dt:
+        batch_idx += 1
+        batch_end = min(cur + timedelta(minutes=BATCH_CANDLES - 1), end_dt)
+
+        params = {
+            "granularity": GRANULARITY,
+            "from": iso(cur),
+            "to": iso(batch_end),
+            "price": "M",                # midpoint OHLC
+            "includeFirst": "true"
+        }
+
+        t0 = time.time()
+        r = requests.get(f"{API_BASE}/instruments/{instrument}/candles", headers=HEADERS, params=params)
+        if r.status_code != 200:
+            time.sleep(1.5)
+            r = requests.get(f"{API_BASE}/instruments/{instrument}/candles", headers=HEADERS, params=params)
+            if r.status_code != 200:
+                raise RuntimeError(f"OANDA error {r.status_code}: {r.text}")
+        dt_ms = (time.time() - t0) * 1000
+
+        raw = r.json().get("candles", [])
+        completed = [c for c in raw if c.get("complete", False)]
+        pulled += len(completed)
+        pct = (min(pulled, total_minutes + 1) / (total_minutes + 1)) * 100 if total_minutes > 0 else 100.0
+
+        print(f"[BATCH {batch_idx:02d}] {cur.strftime('%Y-%m-%d %H:%M')} → {batch_end.strftime('%Y-%m-%d %H:%M')} | "
+              f"got {len(completed):4d} | total {pulled:6d}/{total_minutes+1} ({pct:5.1f}%) | {dt_ms:.0f} ms")
+
+        yield completed
+
+        if not completed:
+            cur = batch_end + timedelta(minutes=1)
+        else:
+            last_ts = pd.to_datetime(completed[-1]["time"], utc=True).to_pydatetime()
+            cur = last_ts + timedelta(minutes=1)
+
+def build_dataframe(candles) -> pd.DataFrame:
+    rows = []
+    for c in candles:
+        t = pd.to_datetime(c["time"], utc=True)
+        mid = c["mid"]
+        rows.append({
+            "Open":  float(mid["o"]),
+            "High":  float(mid["h"]),
+            "Low":   float(mid["l"]),
+            "Close": float(mid["c"]),
+            "Volume": int(c.get("volume", 0)),
+            "Timestamp": t.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S"),
+        })
+    return pd.DataFrame(rows, columns=["Open", "High", "Low", "Close", "Volume", "Timestamp"])
+
+def save_to_excel(df: pd.DataFrame, path: str, title: str, meta: dict):
+    """
+    Writes a summary block and then the table below it, using a dynamic start row
+    so the two never overlap.
+    """
+    with pd.ExcelWriter(path, engine="xlsxwriter", datetime_format="yyyy-mm-dd hh:mm:ss") as writer:
+        sheet = "M1_Candles"
+        wb  = writer.book
+
+        # ----- Title -----
+        ws  = wb.add_worksheet(sheet)
+        writer.sheets[sheet] = ws
+        title_fmt = wb.add_format({"bold": True, "font_size": 14})
+        ws.write(0, 0, title, title_fmt)
+
+        # ----- Summary/meta block -----
+        key_fmt = wb.add_format({"bold": True})
+        r = 2  # meta starts on row 2
+        for k, v in meta.items():
+            ws.write(r, 0, f"{k}:", key_fmt)
+            ws.write(r, 1, str(v))
+            r += 1
+
+        # Compute a safe start row for data: one blank row after meta
+        startrow = r + 1
+
+        # ----- Data table -----
+        df.to_excel(writer, sheet_name=sheet, index=False, startrow=startrow)
+
+        # Header formatting
+        header_fmt = wb.add_format({"bold": True, "bg_color": "#D9E1F2", "border": 1})
+        for ci, col in enumerate(df.columns):
+            ws.write(startrow, ci, col, header_fmt)
+
+        # Autofilter & freeze header row
+        ws.autofilter(startrow, 0, startrow + len(df), len(df.columns) - 1)
+        ws.freeze_panes(startrow + 1, 0)
+
+        # Column widths
+        for i, col in enumerate(df.columns):
+            max_len = max([len(str(col))] + [len(str(x)) for x in df[col].head(500).astype(str)])
+            ws.set_column(i, i, min(max(12, max_len + 2), 30))
+
+        # Footer note
+        footer_fmt = wb.add_format({"italic": True, "font_color": "#555555"})
+        ws.write(startrow + len(df) + 2, 0, f"Total candles: {len(df)}", footer_fmt)
+
+def main():
+    start_dt = parse_gmt(START_STR)
+    end_dt   = parse_gmt(END_STR)
+    if end_dt < start_dt:
+        raise ValueError("END_DT is earlier than START_DT.")
+
+    print(f"[START] Pulling {INSTRUMENT} {GRANULARITY} from {start_dt} to {end_dt} (UTC)")
+    all_rows = []
+    batches = 0
+
+    for batch in fetch_candles(INSTRUMENT, start_dt, end_dt):
+        batches += 1
+        all_rows.extend(batch)
+
+    if not all_rows:
+        print("[WARN] No candles retrieved for the requested window.")
+        return
+
+    df = build_dataframe(all_rows)
+    df.sort_values("Timestamp", inplace=True, ignore_index=True)
+
+    meta = {
+        "Instrument": INSTRUMENT,
+        "Granularity": GRANULARITY,
+        "Time Window (UTC)": f"{start_dt.strftime('%Y-%m-%d %H:%M:%S')} → {end_dt.strftime('%Y-%m-%d %H:%M:%S')}",
+        "Price Type": "Midpoint (price=M) = (bid+ask)/2",
+        "Total Rows": len(df),
+        "Total Batches": batches,
+        "First Timestamp (UTC)": df.iloc[0]['Timestamp'],
+        "Last Timestamp (UTC)": df.iloc[-1]['Timestamp'],
+        "Data Source": "OANDA v3 API",
+    }
+    title = f"{INSTRUMENT} — {GRANULARITY} Raw Candles Export (Mid Prices)"
+    save_to_excel(df, OUTPUT_XLSX, title, meta)
+
+    # Terminal summary
+    print("\n===== SUMMARY =====")
+    for k, v in meta.items():
+        print(f"{k:>22}: {v}")
+    print(f"Saved to   : {OUTPUT_XLSX}")
+
+if __name__ == "__main__":
+    main()
