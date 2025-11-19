@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 from datetime import datetime, timezone
 import time
+from pandas.api.types import DatetimeTZDtype
 
 # ---------------- CONFIGURATION ----------------
 BASE_URL = "https://restapi-real3.sirixtrader.com"
@@ -23,7 +24,8 @@ timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_FILE = os.path.join(SAVE_DIR, f"closed_positions_report_{timestamp}.xlsx")
 
 # Date range: From June 1st, 2025 00:00:00 until now
-START_DATE = "2025-06-01T00:00:00Z"
+START_DATE = "2025-11-01T00:00:00Z"
+# END_DATE = "2025-11-01T00:00:00Z"
 END_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # ------------------------------------------------
@@ -67,6 +69,27 @@ def create_excel_report(closed_positions):
     # --- Sheet 1: Full raw data ---
     df_full = pd.DataFrame(closed_positions)
 
+    # --- Normalise everything to UTC-aware datetimes ---
+    df_full["OpenTime"] = pd.to_datetime(df_full["OpenTime"], errors="coerce", utc=True)
+
+    start_dt = pd.to_datetime(START_DATE, utc=True)
+    end_dt = pd.to_datetime(END_DATE, utc=True)
+
+    # Debug info so we can see what's going on
+    print(f"[DEBUG] Raw rows from API: {len(df_full)}")
+    print(f"[DEBUG] OpenTime min: {df_full['OpenTime'].min()} | max: {df_full['OpenTime'].max()}")
+
+    # Keep only rows where OpenTime is between start and end
+    mask = (df_full["OpenTime"] >= start_dt) & (df_full["OpenTime"] <= end_dt)
+    df_full = df_full.loc[mask].reset_index(drop=True)
+
+    print(f"[DEBUG] Rows after OpenTime filter: {len(df_full)}")
+    print(f"[DEBUG] Unique UserID count: {df_full['UserID'].nunique()}")
+
+    # --- Remove timezone for Excel compatibility ---
+    if isinstance(df_full["OpenTime"].dtype, DatetimeTZDtype):
+        df_full["OpenTime"] = df_full["OpenTime"].dt.tz_localize(None)
+
     # --- Sheet 2: Filtered subset ---
     filtered_columns = {
         "UserID": "User ID",
@@ -97,21 +120,17 @@ def create_excel_report(closed_positions):
         df_full.to_excel(writer, sheet_name="All Data", index=False)
         df_filtered.to_excel(writer, sheet_name="Filtered Data", index=False)
 
-        # Get workbook and worksheet for formatting
         workbook = writer.book
         worksheet = writer.sheets["Filtered Data"]
 
-        # === ADD COLOR FORMATS ===
-        format_buy = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100'})   # light green
-        format_sell = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})  # light red
-        format_profit_positive = workbook.add_format({'font_color': '#0000FF'})              # blue
-        format_profit_negative = workbook.add_format({'font_color': '#9C0006'})              # red
+        format_buy = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100'})
+        format_sell = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+        format_profit_positive = workbook.add_format({'font_color': '#0000FF'})
+        format_profit_negative = workbook.add_format({'font_color': '#9C0006'})
 
-        # Find column indexes dynamically
         action_col_idx = df_filtered.columns.get_loc("Action")
         profit_col_idx = df_filtered.columns.get_loc("Profit (Account Currency)")
 
-        # Apply conditional formatting for BUY/SELL column
         worksheet.conditional_format(
             1, action_col_idx, len(df_filtered), action_col_idx,
             {'type': 'text', 'criteria': 'containing', 'value': 'BUY', 'format': format_buy}
@@ -121,7 +140,6 @@ def create_excel_report(closed_positions):
             {'type': 'text', 'criteria': 'containing', 'value': 'SELL', 'format': format_sell}
         )
 
-        # Apply conditional formatting for Profit column
         worksheet.conditional_format(
             1, profit_col_idx, len(df_filtered), profit_col_idx,
             {'type': 'cell', 'criteria': '>', 'value': 0, 'format': format_profit_positive}
@@ -131,13 +149,10 @@ def create_excel_report(closed_positions):
             {'type': 'cell', 'criteria': '<', 'value': 0, 'format': format_profit_negative}
         )
 
-        # === OPTIONAL QUALITY OF LIFE FORMATTING ===
-        # Auto-adjust column widths
         for i, col in enumerate(df_filtered.columns):
             max_len = max(df_filtered[col].astype(str).map(len).max(), len(col)) + 2
             worksheet.set_column(i, i, max_len)
 
-        # Freeze header row
         worksheet.freeze_panes(1, 0)
 
     print(f"[INFO] Excel report saved successfully!\n"
