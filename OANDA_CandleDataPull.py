@@ -6,20 +6,22 @@ XAUUSD M1 Raw Candles Export (OANDA → Excel)
 - Full summary written at top of the Excel sheet (no overlap)
 """
 
+import os
 import requests
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 import time
 
+
 # ========= USER SETTINGS =========
 OANDA_TOKEN = "37ee33b35f88e073a08d533849f7a24b-524c89ef15f36cfe532f0918a6aee4c2"
-INSTRUMENT  = "XAU_USD"
+INSTRUMENT  = "NAS100_USD"
 GRANULARITY = "M1"
-OUTPUT_XLSX = r"C:\Users\anish\OneDrive\Desktop\Anish\OANDA DATA\XAUUSD\XAUUSD_M1_25-08-01_to_25-08-31.xlsx"
+OUTPUT_DIR = r"C:\Users\anish\OneDrive\Desktop\Anish\OANDA DATA"
 
 # Date strings (DD/MM/YYYY HH:MM:SS TZ)
-START_STR = "01/08/2025 00:00:00 GMT"
-END_STR   = "31/08/2025 23:55:00 GMT"
+START_STR = "01/04/2025 00:00:00 GMT"
+END_STR   = "19/11/2025 23:59:00 GMT"
 
 # Pull in chunks (OANDA returns up to ~5000)
 BATCH_CANDLES = 5000
@@ -145,6 +147,14 @@ def main():
     if end_dt < start_dt:
         raise ValueError("END_DT is earlier than START_DT.")
 
+    # --- Build auto filename: {ticker}-1M_Data_{startdate}-{enddate}.xlsx ---
+    # Dates formatted as DDMMYY, e.g. 01/08/2025 → '010825'
+    start_label = start_dt.strftime("%d%m%y")
+    end_label   = end_dt.strftime("%d%m%y")
+
+    filename = f"{INSTRUMENT}-1M_Data_{start_label}-{end_label}.xlsx"
+    output_path = os.path.join(OUTPUT_DIR, filename)
+
     print(f"[START] Pulling {INSTRUMENT} {GRANULARITY} from {start_dt} to {end_dt} (UTC)")
     all_rows = []
     batches = 0
@@ -171,14 +181,15 @@ def main():
         "Last Timestamp (UTC)": df.iloc[-1]['Timestamp'],
         "Data Source": "OANDA v3 API",
     }
+
     title = f"{INSTRUMENT} — {GRANULARITY} Raw Candles Export (Mid Prices)"
-    save_to_excel(df, OUTPUT_XLSX, title, meta)
+    save_to_excel(df, output_path, title, meta)
 
     # Terminal summary
     print("\n===== SUMMARY =====")
     for k, v in meta.items():
         print(f"{k:>22}: {v}")
-    print(f"Saved to   : {OUTPUT_XLSX}")
+    print(f"Saved to   : {output_path}")
 
 if __name__ == "__main__":
     main()
