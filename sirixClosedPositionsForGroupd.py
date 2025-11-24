@@ -2,6 +2,7 @@ import os
 import requests
 import pandas as pd
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo  # for Israel + Europe/London DST handling
 import time
 from pandas.api.types import DatetimeTZDtype
 
@@ -16,13 +17,20 @@ HEADERS = {
 }
 
 # --- Directory to save report ---
-SAVE_DIR = r"C:\Users\anish\OneDrive\Desktop\Anish\SIRIX DATA\ByGroups"
+SAVE_DIR = r"C:\Users\anish\OneDrive\Desktop\Anish\SIRIX DATA\ByGroupsNEW"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
+# --- Timezones ---
+# SiRiX server time: Israel local time (IST/IDT, DST-aware)
+ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
-# Date range
+# UK time with automatic GMT/BST handling
+UK_TZ = ZoneInfo("Europe/London")
+
+# Date range (you are currently expressing these as UTC with 'Z')
+# We'll convert these to Israel time for filtering.
 START_DATE = "2025-11-01T00:00:00Z"
-# END_DATE = "2025-11-01T00:00:00Z"
+# END_DATE   = "2025-11-01T00:00:00Z"
 END_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # --- File name based on START_DATE and END_DATE (e.g. 010425-300425) ---
@@ -38,7 +46,7 @@ def format_date_label(date_str: str) -> str:
 start_label = format_date_label(START_DATE)
 
 # End label: we use END_DATE minus 1 day so that
-# 2025-05-01 becomes 30-04-25 → '300425'
+# 2025-06-01 becomes 31-05-25 → '310525'
 end_dt_for_label = datetime.strptime(END_DATE[:10], "%Y-%m-%d") - timedelta(days=1)
 end_label = end_dt_for_label.strftime("%d%m%y")
 
@@ -92,28 +100,66 @@ def create_excel_report(closed_positions):
     # --- Sheet 1: Full raw data ---
     df_full = pd.DataFrame(closed_positions)
 
-    # --- Normalise everything to UTC-aware datetimes ---
-    # OpenTime (some APIs may already send with 'Z' so utc=True is fine)
-    df_full["OpenTime"] = pd.to_datetime(df_full.get("OpenTime"), errors="coerce", utc=True)
+    # --- Parse times as Israel server local, then derive UK (GMT/BST) ---
+    open_raw = df_full.get("OpenTime")
+    close_raw = df_full.get("CloseTime")
 
-    start_dt = pd.to_datetime(START_DATE, utc=True)
-    end_dt = pd.to_datetime(END_DATE, utc=True)
+    # Parse to datetime (no tz yet)
+    open_dt = pd.to_datetime(open_raw, errors="coerce", utc=False)
+    close_dt = pd.to_datetime(close_raw, errors="coerce", utc=False)
 
-    # Debug info so we can see what's going on
+    # Attach Israel timezone (IST/IDT).
+    # For DST edge cases:
+    # - ambiguous='NaT'      -> any truly ambiguous wall times become NaT
+    # - nonexistent='shift_forward' -> spring-forward gaps are nudged to next valid time
+    open_server = open_dt.dt.tz_localize(
+        ISRAEL_TZ,
+        ambiguous="NaT",
+        nonexistent="shift_forward"
+    )
+
+    close_server = close_dt.dt.tz_localize(
+        ISRAEL_TZ,
+        ambiguous="NaT",
+        nonexistent="shift_forward"
+    )
+
+    # Drop rows where we could not resolve Israel local time (very rare DST edge cases)
+    mask_valid = open_server.notna()
+    open_server = open_server[mask_valid]
+    close_server = close_server[mask_valid]
+    df_full = df_full.loc[mask_valid].reset_index(drop=True)
+
+
+    # Two views: Server (Israel) + UK (GMT/BST-aware)
+    df_full["OpenTime_Server"] = open_server
+    df_full["OpenTime_UK"] = df_full["OpenTime_Server"].dt.tz_convert(UK_TZ)
+
+    df_full["CloseTime_Server"] = close_server
+    df_full["CloseTime_UK"] = df_full["CloseTime_Server"].dt.tz_convert(UK_TZ)
+
+    # --- Date range filter applied in Israel time ---
+    # Convert your UTC-like START/END strings into Israel local datetimes
+    start_dt_server = pd.to_datetime(START_DATE, utc=True).tz_convert(ISRAEL_TZ)
+    end_dt_server   = pd.to_datetime(END_DATE,   utc=True).tz_convert(ISRAEL_TZ)
+
     print(f"[DEBUG] Raw rows from API: {len(df_full)}")
-    print(f"[DEBUG] OpenTime min: {df_full['OpenTime'].min()} | max: {df_full['OpenTime'].max()}")
+    print(f"[DEBUG] OpenTime_Server min: {df_full['OpenTime_Server'].min()} | "
+          f"max: {df_full['OpenTime_Server'].max()}")
 
-    # Keep only rows where OpenTime is between start and end
-    mask = (df_full["OpenTime"] >= start_dt) & (df_full["OpenTime"] <= end_dt)
+    # Filter on Israel server time
+    mask = (df_full["OpenTime_Server"] >= start_dt_server) & (df_full["OpenTime_Server"] <= end_dt_server)
     df_full = df_full.loc[mask].reset_index(drop=True)
 
-    print(f"[DEBUG] Rows after OpenTime filter: {len(df_full)}")
+    print(f"[DEBUG] Rows after OpenTime_Server filter: {len(df_full)}")
     if "UserID" in df_full.columns:
         print(f"[DEBUG] Unique UserID count: {df_full['UserID'].nunique()}")
 
-    # --- Remove timezone for Excel compatibility ---
-    if isinstance(df_full["OpenTime"].dtype, DatetimeTZDtype):
-        df_full["OpenTime"] = df_full["OpenTime"].dt.tz_localize(None)
+    # --- Drop tz for Excel compatibility (All Data sheet) ---
+    for col in ["OpenTime_Server", "OpenTime_UK",
+                "CloseTime_Server", "CloseTime_UK"]:
+        if col in df_full.columns and isinstance(df_full[col].dtype, DatetimeTZDtype):
+            df_full[col] = df_full[col].dt.tz_localize(None)
 
     # --- Sheet 2: Filtered subset ---
     filtered_columns = {
@@ -122,9 +168,12 @@ def create_excel_report(closed_positions):
         "Amount": "Amount",
         "AmountLots": "Lots",
         "ActionType": "Action",  # We'll convert values below
-        "OpenTime": "Open Time",
+        # Times (two views for analysis)
+        "OpenTime_Server": "Open Time (Server - Israel Local)",
+        "OpenTime_UK": "Open Time (UK - GMT/BST)",
         "OpenRate": "Open Rate",
-        "CloseTime": "Close Time",
+        "CloseTime_Server": "Close Time (Server - Israel Local)",
+        "CloseTime_UK": "Close Time (UK - GMT/BST)",
         "CloseRate": "Close Rate",
         "ProfitInAccountCurrency": "Profit (Account Currency)"
     }
@@ -139,8 +188,14 @@ def create_excel_report(closed_positions):
     if "Action" in df_filtered.columns:
         df_filtered["Action"] = df_filtered["Action"].map({0: "BUY", 1: "SELL"}).fillna("UNKNOWN")
 
-    # --- Convert time strings to readable format ---
-    for col in ["Open Time", "Close Time"]:
+    # --- Ensure time columns are clean, readable strings ---
+    time_cols = [
+        "Open Time (Server - Israel Local)",
+        "Open Time (UK - GMT/BST)",
+        "Close Time (Server - Israel Local)",
+        "Close Time (UK - GMT/BST)",
+    ]
+    for col in time_cols:
         if col in df_filtered.columns:
             df_filtered[col] = pd.to_datetime(df_filtered[col], errors="coerce").dt.strftime(
                 "%Y-%m-%d %H:%M:%S"
@@ -210,7 +265,7 @@ def create_excel_report(closed_positions):
 
 def main():
     print("[DONE] Starting closed positions export process...")
-    print(f"[-] Date range: {START_DATE} → {END_DATE}")
+    print(f"[-] Date range (UTC strings): {START_DATE} → {END_DATE}")
     print(f"[-] Groups: {GROUPS}\n")
 
     start_time = time.time()

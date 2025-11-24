@@ -11,17 +11,20 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 import time
+from dateutil import tz
+
+UK_TZ = tz.gettz("Europe/London")
 
 
 # ========= USER SETTINGS =========
 OANDA_TOKEN = "37ee33b35f88e073a08d533849f7a24b-524c89ef15f36cfe532f0918a6aee4c2"
-INSTRUMENT  = "NAS100_USD"
+INSTRUMENT  = "EUR_USD"
 GRANULARITY = "M1"
-OUTPUT_DIR = r"C:\Users\anish\OneDrive\Desktop\Anish\OANDA DATA"
+OUTPUT_DIR = r"C:\Users\anish\OneDrive\Desktop\Anish\OANDA DATA\Latest-Data"
 
 # Date strings (DD/MM/YYYY HH:MM:SS TZ)
-START_STR = "01/04/2025 00:00:00 GMT"
-END_STR   = "19/11/2025 23:59:00 GMT"
+START_STR = "01/04/2025 00:00:00"
+END_STR   = "23/11/2025 23:59:00"
 
 # Pull in chunks (OANDA returns up to ~5000)
 BATCH_CANDLES = 5000
@@ -29,9 +32,16 @@ API_BASE = "https://api-fxpractice.oanda.com/v3"
 HEADERS = {"Authorization": f"Bearer {OANDA_TOKEN}"}
 # =================================
 
-def parse_gmt(s: str) -> datetime:
-    dt = pd.to_datetime(s, dayfirst=True, utc=True)
-    return dt.to_pydatetime()
+def parse_uk_local(s: str) -> datetime:
+    """
+    Parse a DD/MM/YYYY HH:MM:SS string as London local time
+    (handles GMT/BST automatically) and return a UTC-aware datetime.
+    """
+    # Parse as naive (no timezone yet) – pandas will ignore the 'GMT' text safely
+    dt_naive = pd.to_datetime(s, dayfirst=True).to_pydatetime()
+    # Attach London tz (with DST rules) and convert to UTC
+    dt_local = dt_naive.replace(tzinfo=UK_TZ)
+    return dt_local.astimezone(timezone.utc)
 
 def iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -82,7 +92,11 @@ def fetch_candles(instrument: str, start_dt: datetime, end_dt: datetime):
 def build_dataframe(candles) -> pd.DataFrame:
     rows = []
     for c in candles:
-        t = pd.to_datetime(c["time"], utc=True)
+        # OANDA time is UTC
+        t_utc = pd.to_datetime(c["time"], utc=True)
+        # Convert to UK local (handles GMT/BST automatically)
+        t_uk = t_utc.tz_convert(UK_TZ)
+
         mid = c["mid"]
         rows.append({
             "Open":  float(mid["o"]),
@@ -90,9 +104,24 @@ def build_dataframe(candles) -> pd.DataFrame:
             "Low":   float(mid["l"]),
             "Close": float(mid["c"]),
             "Volume": int(c.get("volume", 0)),
-            "Timestamp": t.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S"),
+
+            # Candle open in UTC
+            "Timestamp_UTC": t_utc.strftime("%Y-%m-%d %H:%M:%S"),
+
+            # Candle open/close in UK local time (GMT/BST)
+            "Open Time (UK - GMT/BST)":  t_uk.strftime("%Y-%m-%d %H:%M:%S"),
+            "Close Time (UK - GMT/BST)": (t_uk + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"),
         })
-    return pd.DataFrame(rows, columns=["Open", "High", "Low", "Close", "Volume", "Timestamp"])
+
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "Open", "High", "Low", "Close", "Volume",
+            "Timestamp_UTC",
+            "Open Time (UK - GMT/BST)",
+            "Close Time (UK - GMT/BST)",
+        ],
+    )
 
 def save_to_excel(df: pd.DataFrame, path: str, title: str, meta: dict):
     """
@@ -142,8 +171,9 @@ def save_to_excel(df: pd.DataFrame, path: str, title: str, meta: dict):
         ws.write(startrow + len(df) + 2, 0, f"Total candles: {len(df)}", footer_fmt)
 
 def main():
-    start_dt = parse_gmt(START_STR)
-    end_dt   = parse_gmt(END_STR)
+    start_dt = parse_uk_local(START_STR)  # UK local → UTC
+    end_dt = parse_uk_local(END_STR)  # UK local → UTC
+
     if end_dt < start_dt:
         raise ValueError("END_DT is earlier than START_DT.")
 
@@ -168,17 +198,24 @@ def main():
         return
 
     df = build_dataframe(all_rows)
-    df.sort_values("Timestamp", inplace=True, ignore_index=True)
+    df.sort_values("Timestamp_UTC", inplace=True, ignore_index=True)
+
+    # For meta, also compute UK-local window from the UTC datetimes
+    start_uk = start_dt.astimezone(UK_TZ)
+    end_uk = end_dt.astimezone(UK_TZ)
 
     meta = {
         "Instrument": INSTRUMENT,
         "Granularity": GRANULARITY,
         "Time Window (UTC)": f"{start_dt.strftime('%Y-%m-%d %H:%M:%S')} → {end_dt.strftime('%Y-%m-%d %H:%M:%S')}",
+        "Time Window (UK local)": f"{start_uk.strftime('%Y-%m-%d %H:%M:%S')} → {end_uk.strftime('%Y-%m-%d %H:%M:%S')}",
         "Price Type": "Midpoint (price=M) = (bid+ask)/2",
         "Total Rows": len(df),
         "Total Batches": batches,
-        "First Timestamp (UTC)": df.iloc[0]['Timestamp'],
-        "Last Timestamp (UTC)": df.iloc[-1]['Timestamp'],
+        "First Candle (UTC Open)": df.iloc[0]["Timestamp_UTC"],
+        "Last Candle (UTC Open)": df.iloc[-1]["Timestamp_UTC"],
+        "First Candle (UK Open)": df.iloc[0]["Open Time (UK - GMT/BST)"],
+        "Last Candle (UK Open)": df.iloc[-1]["Open Time (UK - GMT/BST)"],
         "Data Source": "OANDA v3 API",
     }
 
