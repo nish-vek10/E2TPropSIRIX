@@ -17,7 +17,7 @@ HEADERS = {
 }
 
 # --- Directory to save report ---
-SAVE_DIR = r"C:\Users\anish\OneDrive\Desktop\Anish\SIRIX DATA\ByGroupsNEW"
+SAVE_DIR = r"C:\Users\anish\OneDrive\Desktop\Anish\SIRIX DATA\ByGroups-Dec"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # --- Timezones ---
@@ -29,7 +29,7 @@ UK_TZ = ZoneInfo("Europe/London")
 
 # Date range (you are currently expressing these as UTC with 'Z')
 # We'll convert these to Israel time for filtering.
-START_DATE = "2025-11-01T00:00:00Z"
+START_DATE = "2025-12-04T00:00:00Z"
 # END_DATE   = "2025-11-01T00:00:00Z"
 END_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

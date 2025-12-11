@@ -18,13 +18,14 @@ UK_TZ = tz.gettz("Europe/London")
 
 # ========= USER SETTINGS =========
 OANDA_TOKEN = "37ee33b35f88e073a08d533849f7a24b-524c89ef15f36cfe532f0918a6aee4c2"
-INSTRUMENT  = "EUR_USD"
+INSTRUMENT  = "XAU_USD"
 GRANULARITY = "M1"
-OUTPUT_DIR = r"C:\Users\anish\OneDrive\Desktop\Anish\OANDA DATA\Latest-Data"
+OUTPUT_DIR = r"C:\Users\anish\OneDrive\Desktop\Anish\OANDA DATA\Latest-Data-DEC"
 
 # Date strings (DD/MM/YYYY HH:MM:SS TZ)
-START_STR = "01/04/2025 00:00:00"
-END_STR   = "23/11/2025 23:59:00"
+START_STR = "04/12/2025 00:00:00"
+# END_STR   = "11/12/2025 23:59:00"
+END_STR = datetime.now(UK_TZ).strftime("%d/%m/%Y %H:%M:%S")
 
 # Pull in chunks (OANDA returns up to ~5000)
 BATCH_CANDLES = 5000
