@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/CRMLeaderBoard.iml" filepath="$PROJECT_DIR$/.idea/CRMLeaderBoard.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/CRM-SIRIX.iml" filepath="$PROJECT_DIR$/.idea/CRM-SIRIX.iml" />
     </modules>
   </component>
 </project>
