@@ -6,7 +6,7 @@ import pandas as pd
 server = "crmrepl3.LEVERATETECH.COM,1433"
 database = "etwotprop_mscrm"
 username = "Repl_eTwotprop"
-password = "vCm5ZzkkLQ9Pa6imLY2P"  # <-- replace with secure handling in production
+password = "vCm5ZzkkLQ9Pa6imLY2P"
 
 # === 2. Table list ===
 tables = [
